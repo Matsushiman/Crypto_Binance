@@ -6,16 +6,16 @@ import ccxt
 from time import sleep
 from credentials import API_KEY, SECRET_KEY
 
-root = os.path.dirname(
+base = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.append(root + '/python')
+sys.path.append(base + '/python')
 
-STANDARD_CURRENCY = "USDT"
-WISHING_CURRENCY = "BTC"
+BASE_CURRENCY = "USDT"
+REQUIRED_CURRENCY = "BTC"
 
 LOWEST_RATE = 999999.0
 HIGHEST_RATE = 0.0
-PROFIT_BOARDER = 7.0
+PROFIT_BOARDER = 0.0
 RETRY_COUNT = 30
 WAIT_IN_SEC = 3.0
 
@@ -40,100 +40,74 @@ def exclude_fee(cost):
 
 def get_profit(exchange):
 
-    lowest_rate = LOWEST_RATE
-    highest_rate = HIGHEST_RATE
+    conversion_rate = 0.00000001
 
     try:
         tickers = exchange.fetch_tickers()
-        ticker_ask = tickers[f'{WISHING_CURRENCY}/{STANDARD_CURRENCY}']['ask']
-        ticker_bid = tickers[f'{WISHING_CURRENCY}/{STANDARD_CURRENCY}']['bid']
+        normal_rate_ask = tickers[f'{REQUIRED_CURRENCY}/{BASE_CURRENCY}']['ask']
+        normal_rate_bid = tickers[f'{REQUIRED_CURRENCY}/{BASE_CURRENCY}']['bid']
+
         for c in target_currencies:
-            ticker_wishing_ask = tickers[f'{c}/{WISHING_CURRENCY}']['ask']
-            ticker_wishing_bid = tickers[f'{c}/{WISHING_CURRENCY}']['bid']
-            ticker_std_ask = tickers[f'{c}/{STANDARD_CURRENCY}']['ask']
-            ticker_std_bid = tickers[f'{c}/{STANDARD_CURRENCY}']['bid']
+            rate_required_bid = tickers[f'{c}/{REQUIRED_CURRENCY}']['bid']
+            rate_base_ask = tickers[f'{c}/{BASE_CURRENCY}']['ask']
 
-            if ticker_wishing_ask > 0 and ticker_wishing_bid > 0 and ticker_std_ask > 0 and ticker_std_bid > 0:
-                rate_buy = ticker_std_ask/ticker_wishing_bid
-                rate_sell = ticker_std_bid/ticker_wishing_ask
-                # print(
-                #     c,
-                #     'Ask {0:.8f}'.format(
-                #         ticker_std_ask) + f'({c}/{STANDARD_CURRENCY}),',
-                #     'Bid {0:.8f}'.format(
-                #         ticker_wishing_bid) + f'({c}/{WISHING_CURRENCY}),',
-                #     'Rate {0:.8f}'.format(
-                #         rate_buy) + f'({STANDARD_CURRENCY}/{WISHING_CURRENCY})',
-                #     'Ask {0:.8f}'.format(
-                #         ticker_wishing_ask) + f'({c}/{WISHING_CURRENCY}),',
-                #     'Bid {0:.8f}'.format(
-                #         ticker_std_bid) + f'({c}/{STANDARD_CURRENCY}),',
-                #     'Rate {0:.8f}'.format(
-                #         rate_sell) + f'({STANDARD_CURRENCY}/{WISHING_CURRENCY})'
-                # )
+            if rate_required_bid > 0 and rate_base_ask > 0:
+                rate_candidate = rate_required_bid*normal_rate_bid/rate_base_ask
 
-                if rate_buy < lowest_rate:
-                    lowest_currency = c
-                    lowest_rate = rate_buy
-                if rate_sell > highest_rate:
-                    highest_currency = c
-                    highest_rate = rate_sell
+                if rate_candidate > conversion_rate:
+                    target_currency = c
+                    target_upper = True
+                    conversion_rate = rate_candidate
 
         print(
-            f'Stardard Market:',
-            '\t',
-            'Ask {0:.8f}'.format(
-                ticker_ask),
-            f'{WISHING_CURRENCY}/{STANDARD_CURRENCY}',
-            '\t',
-            'Bid {0:.8f}'.format(
-                ticker_bid),
-            f'{WISHING_CURRENCY}/{STANDARD_CURRENCY}'
+            '{0}/{1} Ask {2:.8f} '.format(
+                target_currency, BASE_CURRENCY,
+                tickers[f'{target_currency}/{BASE_CURRENCY}']['ask']),
+            '{0}/{1} Bid {2:.8f} '.format(
+                target_currency, REQUIRED_CURRENCY,
+                tickers[f'{target_currency}/{REQUIRED_CURRENCY}']['bid']),
+            '{0}/{1} Bid {2:.8f} '.format(
+                REQUIRED_CURRENCY, BASE_CURRENCY,
+                normal_rate_bid),
+            'Conv {0:.8f}'.format(conversion_rate)
         )
+
+        for c in target_currencies:
+            rate_required_ask = tickers[f'{c}/{REQUIRED_CURRENCY}']['ask']
+            rate_base_bid = tickers[f'{c}/{BASE_CURRENCY}']['bid']
+
+            if rate_required_ask > 0 and rate_base_bid > 0:
+                rate_candidate = rate_base_bid/(normal_rate_ask*rate_required_ask)
+
+                if rate_candidate > conversion_rate:
+                    target_currency = c
+                    target_upper = False
+                    conversion_rate = rate_candidate
+
         print(
-            f'Lowest Market: {lowest_currency}',
-            '\t',
-            'Ask {0:.8f}'.format(
-                tickers[f'{lowest_currency}/{STANDARD_CURRENCY}']['ask']),
-            f'{lowest_currency}/{STANDARD_CURRENCY}',
-            '\t',
-            'Bid {0:.8f}'.format(
-                tickers[f'{lowest_currency}/{WISHING_CURRENCY}']['bid']),
-            f'{lowest_currency}/{WISHING_CURRENCY}',
-            '\t',
-            '{0:.8f}'.format(lowest_rate) +
-            f' {WISHING_CURRENCY}/{STANDARD_CURRENCY}(Conv)'
-        )
-        print(
-            f'Highest Market: {highest_currency}',
-            '\t',
-            'Ask {0:.8f}'.format(
-                tickers[f'{highest_currency}/{WISHING_CURRENCY}']['ask']),
-            f'{highest_currency}/{WISHING_CURRENCY}',
-            '\t',
-            'Bid {0:.8f}'.format(
-                tickers[f'{highest_currency}/{STANDARD_CURRENCY}']['bid']),
-            f'{highest_currency}/{STANDARD_CURRENCY}',
-            '\t',
-            '{0:.8f}'.format(highest_rate) +
-            f' {WISHING_CURRENCY}/{STANDARD_CURRENCY}(Conv)'
+            '{0}/{1} Ask {2:.8f} '.format(
+                REQUIRED_CURRENCY, BASE_CURRENCY,
+                normal_rate_ask),
+            '{0}/{1} Ask {2:.8f} '.format(
+                target_currency, REQUIRED_CURRENCY,
+                tickers[f'{target_currency}/{REQUIRED_CURRENCY}']['ask']),
+            '{0}/{1} Bid {2:.8f} '.format(
+                target_currency, BASE_CURRENCY,
+                tickers[f'{target_currency}/{BASE_CURRENCY}']['bid']),
+            'Conv {0:.8f}'.format(conversion_rate)
         )
 
         profit_set = {
-            'ask_rate': ticker_ask,
-            'bid_rate': ticker_bid,
-            'lowest_currency': lowest_currency,
-            'lowest_rate': lowest_rate,
-            'highest_currency': highest_currency,
-            'highest_rate': highest_rate,
-            'profit': highest_rate - lowest_rate
+            'ask_rate': normal_rate_ask,
+            'bid_rate': normal_rate_bid,
+            'target_currency': target_currency,
+            'target_upper': target_upper,
+            'conversion_rate': conversion_rate,
+            'profit': conversion_rate/(1+ORDER_FEE_RATE)**3 - 1
         }
-        # print('Conversion Rate Difference: {0:.8f}'.format(
-        #     profit_set['profit']), f' {WISHING_CURRENCY}/{STANDARD_CURRENCY}')
-        print('Lowest Conversion Rate Difference: {0:.8f}'.format(
-            ticker_bid - lowest_rate), f' {WISHING_CURRENCY}/{STANDARD_CURRENCY}')
-        print('Highest Conversion Rate Difference: {0:.8f}'.format(
-            highest_rate - ticker_ask), f' {WISHING_CURRENCY}/{STANDARD_CURRENCY}')
+        print('Highest Profit by Conversion Rate: {0:.8f} {1}/{2}, Target Upper: {3}'.format(
+            conversion_rate/(1+ORDER_FEE_RATE)**3 - 1,
+            REQUIRED_CURRENCY, BASE_CURRENCY, target_upper))
         return profit_set
 
     except ccxt.DDoSProtection as e:
@@ -176,26 +150,24 @@ try:
 ###########
 
     all_markets = exchange.fetch_markets()
-    symbols_wishing = [m["symbol"]
-                       for m in all_markets if m["id"].endswith(WISHING_CURRENCY)]
-    symbols_std = [m["symbol"]
-                   for m in all_markets if m["id"].endswith(STANDARD_CURRENCY)]
+    symbols_required = [m["symbol"] for m in all_markets if m["symbol"].endswith(REQUIRED_CURRENCY)]
+    print(f'Num of Symbols with Required Currency: {len(symbols_required)}')
+    symbols_base = [m["symbol"] for m in all_markets if m["symbol"].endswith(BASE_CURRENCY)]
+    print(f'Num of Symbols with Base Currency: {len(symbols_base)}')
 
     target_currencies = []
-    for s_wishing in symbols_wishing:
-        if s_wishing.replace(WISHING_CURRENCY, STANDARD_CURRENCY) in symbols_std:
+    for s_required in symbols_required:
+        if s_required.replace(REQUIRED_CURRENCY, BASE_CURRENCY) in symbols_base:
             target_currencies.append(
-                s_wishing.replace(f'/{WISHING_CURRENCY}', ""))
+                s_required.replace(f'/{REQUIRED_CURRENCY}', ""))
 
     print(f'Num of Target Currencies: {len(target_currencies)}')
 ###########
 
     for i in range(RETRY_COUNT):
         result = get_profit(exchange)
-        diff_lowest = result['bid_rate'] - result['lowest_rate']
-        # diff_highest = result['highest_rate'] - result['ask_rate']
-        # if diff_lowest > PROFIT_BOARDER and diff_highest > PROFIT_BOARDER:
-        if diff_lowest > PROFIT_BOARDER:
+        profit = result['profit']
+        if profit > PROFIT_BOARDER:
             break
         sleep(WAIT_IN_SEC)
     else:
@@ -204,49 +176,32 @@ try:
 
     test_mode = len(sys.argv) > 1 and sys.argv[1] == 'test'
 
-    symbol = f'{result["lowest_currency"]}/{STANDARD_CURRENCY}'
+    symbol = f'{result["target_currency"]}/{BASE_CURRENCY}'
     ticker = exchange.fetch_ticker(symbol)
     amount = ORDER_AMOUNT_IN_STD/ticker['ask']
     order_result = post_order(exchange, symbol, 'buy',
                               exclude_fee(amount), test_mode)
     amount = order_result['filled'] if not test_mode else amount
 
-    symbol = f'{result["lowest_currency"]}/{WISHING_CURRENCY}'
+    symbol = f'{result["target_currency"]}/{REQUIRED_CURRENCY}'
     ticker = exchange.fetch_ticker(symbol)
     order_result = post_order(exchange, symbol, 'sell',
                               exclude_fee(amount), test_mode)
     amount = order_result['filled'] if not test_mode else amount
     amount = amount*ticker['bid']
-    print('Bought Amount: {0:.8f} ({1})'.format(amount, WISHING_CURRENCY))
+    print('Bought Amount: {0:.8f} ({1})'.format(amount, REQUIRED_CURRENCY))
 
-    lowest_rate = result['lowest_rate']
-    for i in range(RETRY_COUNT):
-        result = get_profit(exchange)
-        if exclude_fee(exclude_fee(amount))*result['highest_rate'] - ORDER_AMOUNT_IN_STD > 0:
-            symbol = f'{result["highest_currency"]}/{WISHING_CURRENCY}'
-            ticker = exchange.fetch_ticker(symbol)
-            amount = amount/ticker['ask']
-            order_result = post_order(
-                exchange, symbol, 'buy', exclude_fee(amount), test_mode)
-            amount = order_result['filled'] if not test_mode else amount
-
-            symbol = f'{result["highest_currency"]}/{STANDARD_CURRENCY}'
-
-            break
-        sleep(WAIT_IN_SEC)
-    else:
-        symbol = f'{WISHING_CURRENCY}/{STANDARD_CURRENCY}'
-
+    symbol = f'{REQUIRED_CURRENCY}/{BASE_CURRENCY}'
     ticker = exchange.fetch_ticker(symbol)
     order_result = post_order(exchange, symbol, 'sell',
                               exclude_fee(amount), test_mode)
     amount = order_result['filled'] if not test_mode else amount
     amount = amount*ticker['bid']
-    print('Sold Amount: {0:.8f} ({1})'.format(amount, STANDARD_CURRENCY))
+    print('Sold Amount: {0:.8f} ({1})'.format(amount, BASE_CURRENCY))
 
-    profit_in_std = amount - ORDER_AMOUNT_IN_STD
+    profit_in_base = amount - ORDER_AMOUNT_IN_STD
     print('Profit Amount: {0:.8f} ({1}) = {2:.8f} (JPY)'.format(
-        profit_in_std, STANDARD_CURRENCY, profit_in_std*110))
+        profit_in_base, BASE_CURRENCY, profit_in_base*110))
 
 
 except Exception as e:
