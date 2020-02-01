@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import os
@@ -19,7 +20,8 @@ PROFIT_BOARDER = 0.0
 RETRY_COUNT = 30
 WAIT_IN_SEC = 3.0
 
-ORDER_FEE_RATE = 0.001
+FEE_RATE_STANDARD = 0.001
+FEE_RATE_BNB = 0.0005
 ORDER_AMOUNT_IN_STD = 15.0
 
 
@@ -34,11 +36,14 @@ def print_usage():
     print_exchanges()
 
 
-def exclude_fee(cost):
-    return cost/(1.0 + ORDER_FEE_RATE)
+def exclude_fee(cost, symbol):
+    if symbol.startswith('BNB') or symbol.endswith('BNB'):
+        return cost/(1.0 + FEE_RATE_BNB)
+    else:
+        return cost/(1.0 + FEE_RATE_STANDARD)
 
 
-def get_profit(exchange):
+def get_profit(exchange, target_currencies):
 
     conversion_rate = 0.00000001
 
@@ -56,7 +61,7 @@ def get_profit(exchange):
 
                 if rate_candidate > conversion_rate:
                     target_currency = c
-                    target_upper = True
+                    target_first = True
                     conversion_rate = rate_candidate
 
         print(
@@ -77,11 +82,12 @@ def get_profit(exchange):
             rate_base_bid = tickers[f'{c}/{BASE_CURRENCY}']['bid']
 
             if rate_required_ask > 0 and rate_base_bid > 0:
-                rate_candidate = rate_base_bid/(normal_rate_ask*rate_required_ask)
+                rate_candidate = rate_base_bid / \
+                    (normal_rate_ask*rate_required_ask)
 
                 if rate_candidate > conversion_rate:
                     target_currency = c
-                    target_upper = False
+                    target_first = False
                     conversion_rate = rate_candidate
 
         print(
@@ -101,13 +107,16 @@ def get_profit(exchange):
             'ask_rate': normal_rate_ask,
             'bid_rate': normal_rate_bid,
             'target_currency': target_currency,
-            'target_upper': target_upper,
+            'target_first': target_first,
             'conversion_rate': conversion_rate,
-            'profit': conversion_rate/(1+ORDER_FEE_RATE)**3 - 1
+            'profit': conversion_rate/(1.001*1.0005**2) -
+            1 if BASE_CURRENCY == 'BNB' or REQUIRED_CURRENCY == 'BNB' else conversion_rate/(1.001**3) - 1
         }
-        print('Highest Profit by Conversion Rate: {0:.8f} {1}/{2}, Target Upper: {3}'.format(
-            conversion_rate/(1+ORDER_FEE_RATE)**3 - 1,
-            REQUIRED_CURRENCY, BASE_CURRENCY, target_upper))
+        print('Highest Profit by Conversion Rate: {0:.8f} {1}/{2}, To buy {3} {4}'.format(
+            conversion_rate /
+            (1.001*1.0005**2) -
+            1 if BASE_CURRENCY == 'BNB' or REQUIRED_CURRENCY == 'BNB' else conversion_rate/(1.001**3) - 1,
+            REQUIRED_CURRENCY, BASE_CURRENCY, target_currency, 'first' if target_first else 'seccond'))
         return profit_set
 
     except ccxt.DDoSProtection as e:
@@ -131,6 +140,89 @@ def post_order(exchange, symbol, side, amount, test_mode):
     return order
 
 
+def post_order_chain(exchange, profit_info, test_mode):
+
+    if profit_info['target_first']:
+        # Base CurrencyをTarget Currencyに換算
+        # X = ORDER_AMOUNT_IN_STD/rate_base_ask*(1+手数料率) TARGET
+        symbol = f'{profit_info["target_currency"]}/{BASE_CURRENCY}'
+        ticker = exchange.fetch_ticker(symbol)
+        amount = ORDER_AMOUNT_IN_STD/ticker['ask']
+        # Target Currencyを購入
+        order_result = post_order(
+            exchange, symbol, 'buy', exclude_fee(amount, symbol), test_mode)
+        # 購入数量を取得
+        amount = order_result['filled'] if not test_mode else exclude_fee(
+            amount, symbol)
+        # Target Currencyを売却
+        symbol = f'{profit_info["target_currency"]}/{REQUIRED_CURRENCY}'
+        ticker = exchange.fetch_ticker(symbol)
+        order_result = post_order(
+            exchange, symbol, 'sell', exclude_fee(amount, symbol), test_mode)
+        # 売却数量を取得
+        amount = order_result['filled'] if not test_mode else exclude_fee(
+            amount, symbol)
+        # Target CurrencyをRequired Currencyに換算
+        # Y = X*rate_required_bid/(1+手数料率) REQUIRED
+        amount = amount*ticker['bid']
+        print('Bought Amount: {0:.8f} ({1})'.format(amount, REQUIRED_CURRENCY))
+
+        # Required Currencyを売却
+        symbol = f'{REQUIRED_CURRENCY}/{BASE_CURRENCY}'
+        ticker = exchange.fetch_ticker(symbol)
+        order_result = post_order(
+            exchange, symbol, 'sell', exclude_fee(amount, symbol), test_mode)
+        # 売却数量を取得
+        amount = order_result['filled'] if not test_mode else exclude_fee(
+            amount, symbol)
+        # Required CurrencyをBase Currencyに換算
+        # Z = Y*normal_rate_bid/(1+手数料率) BASE
+        amount = amount*ticker['bid']
+        print('Sold Amount: {0:.8f} ({1})'.format(amount, BASE_CURRENCY))
+    else:
+        # Base CurrencyをRequired Currencyに換算
+        # X = ORDER_AMOUNT_IN_STD/normal_rate_ask*(1+手数料率) REQUIRED
+        symbol = f'{REQUIRED_CURRENCY}/{BASE_CURRENCY}'
+        ticker = exchange.fetch_ticker(symbol)
+        amount = ORDER_AMOUNT_IN_STD/ticker['ask']
+        # Required Currencyを購入
+        order_result = post_order(
+            exchange, symbol, 'buy', exclude_fee(amount, symbol), test_mode)
+        # 購入数量を取得
+        amount = order_result['filled'] if not test_mode else exclude_fee(
+            amount, symbol)
+        # Required CurrencyをTarget Currencyに換算
+        # Y = X/rate_required_ask*(1+手数料率) TARGET
+        symbol = f'{profit_info["target_currency"]}/{REQUIRED_CURRENCY}'
+        ticker = exchange.fetch_ticker(symbol)
+        amount = amount/ticker['bid']
+        # Target Currencyを購入
+        order_result = post_order(
+            exchange, symbol, 'buy', exclude_fee(amount, symbol), test_mode)
+        # 購入数量を取得
+        amount = order_result['filled'] if not test_mode else exclude_fee(
+            amount, symbol)
+        print('Bought Amount: {0:.8f} ({1})'.format(
+            amount, profit_info["target_currency"]))
+
+        # Target Currencyを売却
+        symbol = f'{profit_info["target_currency"]}/{BASE_CURRENCY}'
+        ticker = exchange.fetch_ticker(symbol)
+        order_result = post_order(
+            exchange, symbol, 'sell', exclude_fee(amount, symbol), test_mode)
+        # 売却数量を取得
+        amount = order_result['filled'] if not test_mode else exclude_fee(
+            amount, symbol)
+        # Target CurrencyをBase Currencyに換算
+        # Z = Y*normal_rate_bid/(1+手数料率) BASE
+        amount = amount*ticker['bid']
+        print('Sold Amount: {0:.8f} ({1})'.format(amount, BASE_CURRENCY))
+
+    profit_in_base = amount - ORDER_AMOUNT_IN_STD
+    print('Profit Amount: {0:.8f} ({1}) = {2:.8f} (JPY)'.format(
+        profit_in_base, BASE_CURRENCY, profit_in_base*110))
+
+
 try:
     exchange = ccxt.binance({
         'apiKey': API_KEY,
@@ -150,9 +242,11 @@ try:
 ###########
 
     all_markets = exchange.fetch_markets()
-    symbols_required = [m["symbol"] for m in all_markets if m["symbol"].endswith(REQUIRED_CURRENCY)]
+    symbols_required = [m["symbol"]
+                        for m in all_markets if m["symbol"].endswith(REQUIRED_CURRENCY)]
     print(f'Num of Symbols with Required Currency: {len(symbols_required)}')
-    symbols_base = [m["symbol"] for m in all_markets if m["symbol"].endswith(BASE_CURRENCY)]
+    symbols_base = [m["symbol"]
+                    for m in all_markets if m["symbol"].endswith(BASE_CURRENCY)]
     print(f'Num of Symbols with Base Currency: {len(symbols_base)}')
 
     target_currencies = []
@@ -165,8 +259,8 @@ try:
 ###########
 
     for i in range(RETRY_COUNT):
-        result = get_profit(exchange)
-        profit = result['profit']
+        profit_info = get_profit(exchange, target_currencies)
+        profit = profit_info['profit']
         if profit > PROFIT_BOARDER:
             break
         sleep(WAIT_IN_SEC)
@@ -176,33 +270,7 @@ try:
 
     test_mode = len(sys.argv) > 1 and sys.argv[1] == 'test'
 
-    symbol = f'{result["target_currency"]}/{BASE_CURRENCY}'
-    ticker = exchange.fetch_ticker(symbol)
-    amount = ORDER_AMOUNT_IN_STD/ticker['ask']
-    order_result = post_order(exchange, symbol, 'buy',
-                              exclude_fee(amount), test_mode)
-    amount = order_result['filled'] if not test_mode else amount
-
-    symbol = f'{result["target_currency"]}/{REQUIRED_CURRENCY}'
-    ticker = exchange.fetch_ticker(symbol)
-    order_result = post_order(exchange, symbol, 'sell',
-                              exclude_fee(amount), test_mode)
-    amount = order_result['filled'] if not test_mode else amount
-    amount = amount*ticker['bid']
-    print('Bought Amount: {0:.8f} ({1})'.format(amount, REQUIRED_CURRENCY))
-
-    symbol = f'{REQUIRED_CURRENCY}/{BASE_CURRENCY}'
-    ticker = exchange.fetch_ticker(symbol)
-    order_result = post_order(exchange, symbol, 'sell',
-                              exclude_fee(amount), test_mode)
-    amount = order_result['filled'] if not test_mode else amount
-    amount = amount*ticker['bid']
-    print('Sold Amount: {0:.8f} ({1})'.format(amount, BASE_CURRENCY))
-
-    profit_in_base = amount - ORDER_AMOUNT_IN_STD
-    print('Profit Amount: {0:.8f} ({1}) = {2:.8f} (JPY)'.format(
-        profit_in_base, BASE_CURRENCY, profit_in_base*110))
-
+    post_order_chain(exchange, profit_info, test_mode)
 
 except Exception as e:
 
